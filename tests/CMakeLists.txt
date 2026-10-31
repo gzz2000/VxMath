@@ -23,3 +23,4 @@ if (NOT TARGET gtest_main)
 endif ()
 
 add_subdirectory(VxMath)
+add_subdirectory(legacy_entity_multiply)

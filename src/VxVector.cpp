@@ -1,67 +1,50 @@
 #include "VxVector.h"
 #include "VxMatrix.h"
+#include <cstdint>
+#include <cstring>
 
-static constexpr int SIN_TABLE_SIZE = 4096;  // 16KB for sin table
-static constexpr float SIN_TABLE_SCALE = SIN_TABLE_SIZE / (2.0f * PI);
-
-static float g_SinTable[SIN_TABLE_SIZE + 1];
-static float g_CosTable[SIN_TABLE_SIZE + 1];
+// Retail VxMath: 0x2429E360/370/390, table initialized at 0x2429A4F1.
+// Angles are 14-bit turns, not degrees. Initialization sets x87 PC=24;
+// round the angular product to binary32 before evaluating the sine.
+static constexpr unsigned SIN_TABLE_SIZE = 16384;
+static float g_SinTable[SIN_TABLE_SIZE];
 
 static bool InitializeTrigTablesOnce() {
-    for (int i = 0; i <= SIN_TABLE_SIZE; ++i) {
-        const float angle = (2.0f * PI * static_cast<float>(i)) / SIN_TABLE_SIZE;
-        g_SinTable[i] = sinf(angle);
-        g_CosTable[i] = cosf(angle);
+    const float radiansPerUnit = 0.00038349520764313638f; // original 0x39c90fdb
+    for (unsigned i = 0; i < SIN_TABLE_SIZE; ++i) {
+        const float angle = static_cast<float>(i) * radiansPerUnit;
+        g_SinTable[i] = static_cast<float>(std::sin(static_cast<double>(angle)));
     }
     return true;
 }
 
 void InitializeTables() {
     static const bool initialized = InitializeTrigTablesOnce();
-
     (void) initialized;
 }
 
-inline float TableSin(float x) {
-    InitializeTables();
-
-    // Range reduction and table lookup
-    const float scaled = x * SIN_TABLE_SCALE;
-    const int baseIndex = static_cast<int>(floorf(scaled));
-    const int index = baseIndex & (SIN_TABLE_SIZE - 1);
-    const float frac = scaled - static_cast<float>(baseIndex);
-
-    // Linear interpolation between table entries
-    const float v0 = g_SinTable[index];
-    const float v1 = g_SinTable[index + 1];
-    return v0 + frac * (v1 - v0);
-}
-
-inline float TableCos(float x) {
-    InitializeTables();
-
-    const float scaled = x * SIN_TABLE_SCALE;
-    const int baseIndex = static_cast<int>(floorf(scaled));
-    const int index = baseIndex & (SIN_TABLE_SIZE - 1);
-    const float frac = scaled - static_cast<float>(baseIndex);
-
-    const float v0 = g_CosTable[index];
-    const float v1 = g_CosTable[index + 1];
-    return v0 + frac * (v1 - v0);
-}
-
 int radToAngle(float val) {
-    return static_cast<int>(val * (180.0f / PI));
+    // Original default PC=24 multiplication followed by _ftol (truncate
+    // to int64, return its low DWORD). Explicit range checks avoid C++ UB
+    // for NaN, infinity and values outside the signed 64-bit range.
+    const float product = val * 2607.594482421875f; // original 0x4522f983
+    const double wide = product;
+    if (!(wide >= -9223372036854775808.0 && wide < 9223372036854775808.0))
+        return 0;
+    const uint32_t low = static_cast<uint32_t>(static_cast<int64_t>(wide));
+    int32_t result;
+    std::memcpy(&result, &low, sizeof(result));
+    return result;
 }
 
 float Tsin(int angle) {
-    const float angleRad = static_cast<float>(angle) * (PI / 180.0f);
-    return TableSin(angleRad);
+    InitializeTables();
+    return g_SinTable[static_cast<unsigned>(angle) & (SIN_TABLE_SIZE - 1)];
 }
 
 float Tcos(int angle) {
-    const float angleRad = static_cast<float>(angle) * (PI / 180.0f);
-    return TableCos(angleRad);
+    InitializeTables();
+    return g_SinTable[(static_cast<unsigned>(angle) + SIN_TABLE_SIZE / 4) & (SIN_TABLE_SIZE - 1)];
 }
 
 const VxVector VxVector::m_AxisX(1.0f, 0.0f, 0.0f);

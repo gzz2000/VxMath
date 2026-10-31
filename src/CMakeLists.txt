@@ -29,6 +29,8 @@ set(VXMATH_PUBLIC_HEADERS
         ${VX_INCLUDE_DIR}/VxWindowFunctions.h
         ${VX_INCLUDE_DIR}/VxVector.h
         ${VX_INCLUDE_DIR}/Vx2dVector.h
+        ${VX_INCLUDE_DIR}/VxLegacyMatrix.h
+        ${VX_INCLUDE_DIR}/VxLegacyMatrixMultiply.h
         ${VX_INCLUDE_DIR}/VxMatrix.h
         ${VX_INCLUDE_DIR}/VxBbox.h
         ${VX_INCLUDE_DIR}/VxConfiguration.h
@@ -70,6 +72,7 @@ set(VXMATH_PRIVATE_HEADERS
 
 set(VXMATH_COMMON_SOURCES
         VxMath.cpp
+        VxLegacyMatrix.cpp
         VxSIMDDispatch.cpp
         VxBlitDispatchBridge.cpp
         VxGraphicUtils.cpp
@@ -322,6 +325,9 @@ endfunction()
 if (VXMATH_BUILD_SHARED)
     add_library(VxMath SHARED)
     vx_configure_target(VxMath)
+    if (WIN32)
+        target_sources(VxMath PRIVATE LegacyAbi.cpp legacy_abi.def)
+    endif ()
     if (DEFINED VXMATH_VERSION_OVERRIDE)
         vx_configure_version_resource(_vxmath_version_resource VxMath "VxMath Runtime Library" "VxMath.dll")
         target_sources(VxMath PRIVATE "${_vxmath_version_resource}")

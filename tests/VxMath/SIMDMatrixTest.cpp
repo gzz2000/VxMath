@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include "VxSIMD.h"
@@ -23,6 +25,26 @@ namespace {
 using namespace SIMDTest;
 
 class SIMDMatrixTest : public SIMDTest::SIMDTestBase {};
+
+TEST_F(SIMDMatrixTest, MultiplyVector_MatchesOriginalTransformerCoordinates) {
+    // Original DLL oracle, SR02 wood-to-paper activation. Bitwise equality
+    // matters: these coordinates become the next physical ball's initial state.
+    const uint32_t matrixBits[16] = {0x3f78ed3cu, 0xbe6f0c4eu, 0x322f4ea4u, 0x00000000u, 0x3e6f0c4eu, 0x3f78ed3cu, 0x30a5fde6u, 0x00000000u, 0xb22f4ea4u, 0x30a5fde6u, 0x3f800000u, 0x00000000u, 0xc463db4bu, 0x432ee7e0u, 0x4382c337u, 0x3f800000u};
+    const uint32_t vectorBits[3] = {0x4467f800u, 0x423375d4u, 0xc3847297u};
+    const uint32_t expected[3] = {0x3fa47600u, 0x3ff62780u, 0xc057b000u};
+    VxMatrix matrix;
+    VxVector input, output;
+    std::memcpy(&matrix, matrixBits, sizeof(matrixBits));
+    std::memcpy(&input, vectorBits, sizeof(vectorBits));
+    Vx3DMultiplyMatrixVector(&output, matrix, &input);
+    uint32_t actual[3];
+    std::memcpy(actual, &output, sizeof(actual));
+    for (int i=0; i<3; ++i) EXPECT_EQ(actual[i], expected[i]);
+    Vx3DMultiplyMatrixVector(&input, matrix, &input);
+    std::memcpy(actual, &input, sizeof(actual));
+    for (int i=0; i<3; ++i) EXPECT_EQ(actual[i], expected[i]);
+}
+
 
 //=============================================================================
 // Matrix Multiply Tests

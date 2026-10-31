@@ -1,3 +1,5 @@
+#include <cstdint>
+#include <cstring>
 #include <gtest/gtest.h>
 #include <cmath>
 #include <random>
@@ -1440,4 +1442,26 @@ TEST_F(VxVectorScalarOpsTest, ScalarSubtraction) {
     EXPECT_FLOAT_EQ(result.x, 0.0f);
     EXPECT_FLOAT_EQ(result.y, 1.0f);
     EXPECT_FLOAT_EQ(result.z, 2.0f);
+}
+
+// Original DLL bd17dddb..., E3368; all signed-short table arguments.
+TEST_F(VxTrigFunctionsTest, RetailFourteenBitTableAndWrap) {
+    uint64_t hash = 14695981039346656037ull;
+    for (int angle=-32768; angle<32768; ++angle) {
+        const float values[] = {Tsin(angle), Tcos(angle)};
+        for (float value : values) {
+            uint32_t word; std::memcpy(&word, &value, sizeof(word));
+            for (unsigned byte=0; byte<4; ++byte) {
+                hash ^= (word >> (8*byte)) & 255u;
+                hash *= 1099511628211ull;
+            }
+        }
+    }
+    EXPECT_EQ(hash, 0x787cd3916c4a9e45ull);
+    EXPECT_EQ(radToAngle(PI/2), 4096);
+    EXPECT_EQ(radToAngle(-PI/2), -4096);
+    EXPECT_EQ(radToAngle(PI), 8192);
+    EXPECT_EQ(radToAngle(2*PI), 16384);
+    EXPECT_EQ(radToAngle(std::numeric_limits<float>::infinity()), 0);
+    EXPECT_EQ(radToAngle(std::numeric_limits<float>::quiet_NaN()), 0);
 }

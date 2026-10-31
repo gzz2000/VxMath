@@ -326,6 +326,7 @@ inline void Vx3DMultiplyMatrix4(VxMatrix &ResultMat, const VxMatrix &MatA, const
 }
 
 inline void Vx3DInverseMatrix(VxMatrix &InverseMat, const VxMatrix &Mat) {
+    if (VxTryLegacyInverse(&InverseMat[0][0], &Mat[0][0])) return;
 #if defined(VX_SIMD_SSE)
     VxSIMDInverseAffineMatrix(&InverseMat, &Mat);
 #else
@@ -421,6 +422,7 @@ inline void Vx3DNormalizeRotationRows(const VxMatrix &in, VxMatrix &out) {
 }
 
 inline void VxQuaternion::FromMatrix(const VxMatrix &Mat, XBOOL MatIsUnit, XBOOL RestoreMat) {
+    if (VxTryLegacyQuaternionFromMatrix(&x, &Mat[0][0], MatIsUnit, RestoreMat)) return;
     const VxMatrix *matrix = &Mat;
     VxMatrix normalized;
     if (!MatIsUnit) {

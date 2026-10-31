@@ -1,6 +1,7 @@
 ﻿#ifndef VXMATRIX_H
 #define VXMATRIX_H
 
+#include "VxLegacyMatrix.h"
 #include "VxQuaternion.h"
 #include "VxVector.h"
 #include "XUtil.h"

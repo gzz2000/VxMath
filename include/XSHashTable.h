@@ -606,6 +606,31 @@ public:
     }
 
     /**
+     * Copies the table's iteration and probing state, including empty/deleted
+     * slots and its growth threshold. Reinserting logical entries cannot
+     * reproduce this state after collisions or a resize.
+     */
+    void CopyLayout(const XSHashTable &source) {
+        if (this == &source)
+            return;
+        m_Table.Resize(source.m_Table.Size());
+        for (int i = 0; i < source.m_Table.Size(); ++i) {
+            const tEntry &from = source.m_Table[i];
+            tEntry &to = m_Table[i];
+            // Free slots need not have initialized keys or values.
+            if (from.m_Status == STATUS_OCCUPIED) {
+                to.m_Key = from.m_Key;
+                to.m_Data = from.m_Data;
+            }
+            to.m_Status = from.m_Status;
+        }
+        m_Count = source.m_Count;
+        m_Occupation = source.m_Occupation;
+        m_Threshold = source.m_Threshold;
+        m_LoadFactor = source.m_LoadFactor;
+    }
+
+    /**
      * @brief Assignment operator.
      * @param a The hash table to copy from.
      * @return A reference to this hash table.
