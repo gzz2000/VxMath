@@ -1446,6 +1446,16 @@ BITMAP_HANDLE VxCreateBitmap(const VxImageDescEx &desc) {
 #else
     // Create an SDL_Surface from the image description
     SDL_Surface *surface = SDL_CreateSurface(desc.Width, desc.Height, SDL_PIXELFORMAT_RGBA32);
+#ifdef __EMSCRIPTEN__
+    if (surface && desc.Image && SDL_LockSurface(surface)) {
+        VxImageDescEx dst;
+        dst.Width=surface->w; dst.Height=surface->h; dst.BytesPerLine=surface->pitch;
+        dst.BitsPerPixel=32; dst.RedMask=0xff; dst.GreenMask=0xff00;
+        dst.BlueMask=0xff0000; dst.AlphaMask=0xff000000;
+        dst.Image=static_cast<XBYTE *>(surface->pixels);
+        VxDoBlit(desc,dst);SDL_UnlockSurface(surface);
+    }
+#endif
     return (BITMAP_HANDLE)surface;
 #endif
 }
@@ -1604,6 +1614,16 @@ XBOOL VxCopyBitmap(BITMAP_HANDLE Bitmap, const VxImageDescEx &desc) {
     if (!surface || !desc.Image)
         return FALSE;
     
+#ifdef __EMSCRIPTEN__
+    // VxCopyBitmap reads the platform bitmap back into CK's image, not vice versa.
+    if (!SDL_LockSurface(surface)) return FALSE;
+    VxImageDescEx src;
+    src.Width=surface->w; src.Height=surface->h; src.BytesPerLine=surface->pitch;
+    src.BitsPerPixel=32; src.RedMask=0xff; src.GreenMask=0xff00;
+    src.BlueMask=0xff0000; src.AlphaMask=0xff000000;
+    src.Image=static_cast<XBYTE *>(surface->pixels);
+    VxDoBlit(src,desc);SDL_UnlockSurface(surface);return TRUE;
+#else
     // Copy image data to surface
     if (SDL_LockSurface(surface) == 0) {
         size_t rowBytes = desc.Width * (desc.BitsPerPixel / 8);
@@ -1616,6 +1636,7 @@ XBOOL VxCopyBitmap(BITMAP_HANDLE Bitmap, const VxImageDescEx &desc) {
         return TRUE;
     }
     return FALSE;
+#endif
 #endif
 }
 
@@ -1677,6 +1698,68 @@ XBOOL VxGetMemoryStatus(VxMemoryStatus *status) {
 // Font Functions
 // ============================================================================
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+struct VxWebFont {
+    XString face;
+    int height, weight;
+    XBOOL italic, underline;
+};
+// Canvas2D is only the glyph rasterizer. Pixels still pass through the existing
+// CKSpriteText bitmap/texture path, keeping clipping, transforms and color keys.
+EM_JS(int, VxWebDrawBitmapText, (unsigned char *pixels, int width, int height, int pitch,
+    const char *face, int size, int weight, int italic, int underline,
+    const char *text, int left, int top, int right, int bottom,
+    unsigned align, unsigned background, unsigned foreground), {
+    if (width<=0 || height<=0) return 0;
+    let canvas=Module.vxTextCanvas;
+    if (!canvas) {
+        if (typeof OffscreenCanvas !== 'undefined') canvas=new OffscreenCanvas(width,height);
+        else if (typeof document !== 'undefined') canvas=document.createElement('canvas');
+        else return 0; // Null-rendered Node qualification has no browser glyph backend.
+        Module.vxTextCanvas=canvas;
+    }
+    if(canvas.width!==width)canvas.width=width;
+    if(canvas.height!==height)canvas.height=height;
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    if(!ctx)return 0;
+    const image=ctx.createImageData(width,height);
+    for(let y=0;y<height;y++)image.data.set(HEAPU8.subarray(pixels+y*pitch,pixels+y*pitch+width*4),y*width*4);
+    ctx.putImageData(image,0,0);
+    const family=UTF8ToString(face)||'sans-serif';
+    const px=size<0?-size:size*96/72;
+    const fallback=/consolas|courier|mono/i.test(family)?'monospace':'sans-serif';
+    ctx.font=(italic?"italic ":"")+weight+' '+px+'px '+JSON.stringify(family)+','+fallback;
+    const lines=UTF8ToString(text).split(String.fromCharCode(13)).join("").split(String.fromCharCode(10));
+    const metrics=lines.map(line=>ctx.measureText(line));
+    const m=ctx.measureText('Mg');
+    const ascent=m.fontBoundingBoxAscent||px*.8,descent=m.fontBoundingBoxDescent||px*.2;
+    const lineHeight=ascent+descent,blockHeight=lineHeight*lines.length;
+    let y=top;
+    if(align&16)y=bottom-blockHeight;
+    else if(align&32)y=top+(bottom-top-blockHeight)/2;
+    const color=v=>'rgb('+(v&255)+','+((v>>>8)&255)+','+((v>>>16)&255)+')';
+    ctx.save();ctx.beginPath();ctx.rect(left,top,Math.max(0,right-left),Math.max(0,bottom-top));ctx.clip();
+    ctx.textAlign='left';ctx.textBaseline='alphabetic';
+    for(let i=0;i<lines.length;i++) {
+        const width=metrics[i].width;
+        let x=left;
+        if(align&0x41)x=left+(right-left-width)/2;
+        else if(align&4)x=right-width;
+        // Preserve explicit line breaks used by BGui::Text HUDs and key grids.
+        // GDI-style opaque glyph background; CK applies the sprite's color key.
+        ctx.fillStyle=color(background);ctx.fillRect(x,y,width,lineHeight);
+        ctx.fillStyle=color(foreground);ctx.fillText(lines[i],x,y+ascent);
+        if(underline)ctx.fillRect(x,y+ascent+Math.max(1,descent*.3),width,Math.max(1,px/16));
+        y+=lineHeight;
+    }
+    ctx.restore();
+    const rendered=ctx.getImageData(0,0,width,height).data;
+    for(let row=0;row<height;row++)HEAPU8.set(rendered.subarray(row*width*4,(row+1)*width*4),pixels+row*pitch);
+    return 1;
+});
+#endif
+
 FONT_HANDLE VxCreateFont(const char *FontName, int FontSize, int Weight, XBOOL italic, XBOOL underline) {
 #ifdef _WIN32
     if (!FontName || FontSize == 0)
@@ -1691,6 +1774,10 @@ FONT_HANDLE VxCreateFont(const char *FontName, int FontSize, int Weight, XBOOL i
                              ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_DONTCARE, FontName);
     DeleteDC(dc);
     return font;
+#elif defined(__EMSCRIPTEN__)
+    if (!FontSize) return NULL;
+    return reinterpret_cast<FONT_HANDLE>(new VxWebFont{XString(FontName ? FontName : "sans-serif"),
+        FontSize, Weight > 0 ? Weight : 400, italic, underline});
 #else
     // SDL3 doesn't have built-in font support
     // Would need SDL_ttf integration
@@ -1715,6 +1802,13 @@ XBOOL VxGetFontInfo(FONT_HANDLE Font, VXFONTINFO &desc) {
     desc.Weight = logFont.lfWeight;
     desc.Italic = logFont.lfItalic ? TRUE : FALSE;
     desc.Underline = logFont.lfUnderline ? TRUE : FALSE;
+    return TRUE;
+#elif defined(__EMSCRIPTEN__)
+    if (!Font) return FALSE;
+    const auto *font = reinterpret_cast<const VxWebFont *>(Font);
+    desc.FaceName = font->face;
+    desc.Height = font->height < 0 ? -font->height : (font->height * 96 + 36) / 72;
+    desc.Weight = font->weight; desc.Italic = font->italic; desc.Underline = font->underline;
     return TRUE;
 #else
     (void)Font;
@@ -1759,6 +1853,16 @@ XBOOL VxDrawBitmapText(BITMAP_HANDLE Bitmap, FONT_HANDLE Font, const char *strin
     SelectObject(dc, oldBitmap);
     DeleteDC(dc);
     return result != 0;
+#elif defined(__EMSCRIPTEN__)
+    auto *surface = reinterpret_cast<SDL_Surface *>(Bitmap);
+    const auto *font = reinterpret_cast<const VxWebFont *>(Font);
+    if (!surface || !font || !string || !rect || !SDL_LockSurface(surface)) return FALSE;
+    int result = VxWebDrawBitmapText(static_cast<unsigned char *>(surface->pixels),
+        surface->w, surface->h, surface->pitch, font->face.CStr(), font->height,
+        font->weight, font->italic, font->underline, string,
+        rect->left, rect->top, rect->right, rect->bottom, Align, BkColor, FontColor);
+    SDL_UnlockSurface(surface);
+    return result != 0;
 #else
     // SDL3 doesn't have built-in text rendering
     // Would need SDL_ttf integration
@@ -1777,6 +1881,8 @@ void VxDeleteFont(FONT_HANDLE Font) {
 #ifdef _WIN32
     if (Font)
         DeleteObject(Font);
+#elif defined(__EMSCRIPTEN__)
+    delete reinterpret_cast<VxWebFont *>(Font);
 #else
     (void)Font;
 #endif
